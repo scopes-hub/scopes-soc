@@ -1,0 +1,167 @@
+name: ${COMPOSE_PROJECT_NAME:-soc-lab}
+
+services:
+  wazuh-indexer:
+    image: wazuh/wazuh-indexer:${WAZUH_VERSION:-4.9.2}
+    container_name: ${COMPOSE_PROJECT_NAME:-soc-lab}-wazuh-indexer
+    restart: unless-stopped
+    environment:
+      OPENSEARCH_JAVA_OPTS: ${INDEXER_JAVA_OPTS:--Xms1g -Xmx1g}
+      bootstrap.memory_lock: "true"
+      discovery.type: single-node
+      plugins.security.ssl.http.enabled: "false"
+      plugins.security.disabled: ${INDEXER_SECURITY_DISABLED:-true}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - ./wazuh-indexer/opensearch.yml:/usr/share/wazuh-indexer/opensearch.yml:ro
+      - wazuh_indexer_data:/var/lib/wazuh-indexer
+    networks:
+      soc_backend:
+        aliases:
+          - wazuh.indexer
+    expose:
+      - "9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200 >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+
+  wazuh-manager:
+    image: wazuh/wazuh-manager:${WAZUH_VERSION:-4.9.2}
+    container_name: ${COMPOSE_PROJECT_NAME:-soc-lab}-wazuh-manager
+    restart: unless-stopped
+    depends_on:
+      wazuh-indexer:
+        condition: service_healthy
+    environment:
+      INDEXER_URL: http://wazuh.indexer:9200
+      INDEXER_USERNAME: ${INDEXER_USERNAME:-admin}
+      INDEXER_PASSWORD: ${INDEXER_PASSWORD:?Set INDEXER_PASSWORD in .env before starting the lab}
+      FILEBEAT_SSL_VERIFICATION_MODE: none
+      API_USERNAME: ${WAZUH_API_USERNAME:-wazuh-wui}
+      API_PASSWORD: ${WAZUH_API_PASSWORD:?Set WAZUH_API_PASSWORD in .env before starting the lab}
+      WAZUH_CLUSTER_NAME: ${WAZUH_CLUSTER_NAME:-soc-lab}
+      WAZUH_MANAGER_NAME: ${WAZUH_MANAGER_NAME:-wazuh-manager}
+    ports:
+      - "${WAZUH_AGENT_BIND:-127.0.0.1}:${WAZUH_AGENT_PORT:-1514}:1514/tcp"
+      - "${WAZUH_AGENT_BIND:-127.0.0.1}:${WAZUH_AGENT_PORT_UDP:-1514}:1514/udp"
+      - "${WAZUH_ENROLLMENT_BIND:-127.0.0.1}:${WAZUH_ENROLLMENT_PORT:-1515}:1515/tcp"
+      - "${WAZUH_SYSLOG_BIND:-127.0.0.1}:${WAZUH_SYSLOG_PORT:-5514}:514/udp"
+      - "${WAZUH_API_BIND:-127.0.0.1}:${WAZUH_API_PORT:-55000}:55000/tcp"
+    volumes:
+      - wazuh_manager_api_config:/var/ossec/api/configuration
+      - wazuh_manager_etc:/var/ossec/etc
+      - wazuh_manager_logs:/var/ossec/logs
+      - wazuh_manager_queue:/var/ossec/queue
+      - wazuh_manager_var_multigroups:/var/ossec/var/multigroups
+      - wazuh_manager_integrations:/var/ossec/integrations
+      - wazuh_manager_active_response:/var/ossec/active-response/bin
+      - wazuh_manager_agentless:/var/ossec/agentless
+      - wazuh_manager_wodles:/var/ossec/wodles
+      - wazuh_filebeat_etc:/etc/filebeat
+      - wazuh_filebeat_var:/var/lib/filebeat
+      - suricata_logs:/var/log/suricata:ro
+      - ./wazuh/suricata-localfile.conf:/usr/local/share/wazuh-suricata-localfile.conf:ro
+    networks:
+      soc_backend:
+        aliases:
+          - wazuh.manager
+      soc_frontend:
+
+  wazuh-dashboard:
+    image: wazuh/wazuh-dashboard:${WAZUH_VERSION:-4.9.2}
+    container_name: ${COMPOSE_PROJECT_NAME:-soc-lab}-wazuh-dashboard
+    restart: unless-stopped
+    depends_on:
+      wazuh-indexer:
+        condition: service_healthy
+      wazuh-manager:
+        condition: service_started
+    environment:
+      INDEXER_URL: http://wazuh.indexer:9200
+      INDEXER_USERNAME: ${INDEXER_USERNAME:-admin}
+      INDEXER_PASSWORD: ${INDEXER_PASSWORD:?Set INDEXER_PASSWORD in .env before starting the lab}
+      WAZUH_API_URL: https://wazuh.manager
+      API_USERNAME: ${WAZUH_API_USERNAME:-wazuh-wui}
+      API_PASSWORD: ${WAZUH_API_PASSWORD:?Set WAZUH_API_PASSWORD in .env before starting the lab}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:-admin}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?Set DASHBOARD_PASSWORD in .env before starting the lab}
+      SERVER_SSL_ENABLED: ${DASHBOARD_SSL_ENABLED:-false}
+    ports:
+      - "${WAZUH_DASHBOARD_BIND:-127.0.0.1}:${WAZUH_DASHBOARD_PORT:-8443}:5601/tcp"
+    volumes:
+      - ./wazuh-dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml:ro
+      - wazuh_dashboard_config:/usr/share/wazuh-dashboard/data/wazuh/config
+      - wazuh_dashboard_custom:/usr/share/wazuh-dashboard/plugins/wazuh/public/assets/custom
+    networks:
+      - soc_backend
+      - soc_frontend
+
+  suricata:
+    image: jasonish/suricata:${SURICATA_VERSION:-7.0.8}
+    container_name: ${COMPOSE_PROJECT_NAME:-soc-lab}-suricata
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_NICE
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - -i
+      - ${SURICATA_INTERFACE:-eth0}
+      - --user
+      - suricata
+      - --group
+      - suricata
+      - -vvv
+    volumes:
+      - ./suricata/suricata.yaml:/etc/suricata/suricata.yaml
+      - ./suricata/rules:/var/lib/suricata/rules
+      - suricata_logs:/var/log/suricata
+    networks:
+      - sensor_net
+      - soc_backend
+
+  traffic-generator:
+    image: nicolaka/netshoot:${NETSHOOT_VERSION:-latest}
+    container_name: ${COMPOSE_PROJECT_NAME:-soc-lab}-traffic-generator
+    profiles:
+      - tools
+    command: ["sleep", "infinity"]
+    networks:
+      - sensor_net
+
+networks:
+  soc_frontend:
+    driver: bridge
+  soc_backend:
+    driver: bridge
+    internal: true
+  sensor_net:
+    driver: bridge
+    internal: true
+
+volumes:
+  wazuh_indexer_data:
+  wazuh_manager_api_config:
+  wazuh_manager_etc:
+  wazuh_manager_logs:
+  wazuh_manager_queue:
+  wazuh_manager_var_multigroups:
+  wazuh_manager_integrations:
+  wazuh_manager_active_response:
+  wazuh_manager_agentless:
+  wazuh_manager_wodles:
+  wazuh_filebeat_etc:
+  wazuh_filebeat_var:
+  wazuh_dashboard_config:
+  wazuh_dashboard_custom:
+  suricata_logs:
