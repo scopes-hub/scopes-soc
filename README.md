@@ -2,7 +2,7 @@
 
 scopes-SOC is a Docker Compose SOC lab for local use. It runs Wazuh Indexer, Wazuh Manager, Wazuh Dashboard, Suricata, and an optional traffic generator with persistent Docker volumes and isolated lab networking.
 
-This project is safe to view on GitHub because it does not include real credentials. It is still a lab configuration, not a production deployment.
+This project is primarily intended for use with Linux operating systems. I may work on a Windows/Mac version soon.
 
 ## Security Defaults
 
