@@ -11,7 +11,7 @@ This project is safe to view on GitHub because it does not include real credenti
 - Published service ports bind to `127.0.0.1` by default.
 - Wazuh Indexer security and dashboard TLS are disabled for lab simplicity, so do not expose this stack directly to a LAN or the internet.
 
-If this project was ever committed with real passwords, rotate those values before reusing the lab.
+If this project was ever committed with real passwords, rotate those values before reusing the lab. [this project is public and can contain forks]
 
 ## Requirements
 
